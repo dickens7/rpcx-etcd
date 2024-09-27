@@ -10,9 +10,14 @@ import (
 	"github.com/rpcxio/libkv"
 	"github.com/rpcxio/libkv/store"
 	estore "github.com/rpcxio/rpcx-etcd/store"
+	"github.com/rpcxio/rpcx-etcd/store/etcdv3singe"
 	"github.com/smallnest/rpcx/log"
 	"github.com/smallnest/rpcx/share"
 )
+
+func init() {
+	libkv.AddStore(estore.ETCDV3, etcdv3singe.New)
+}
 
 type RegItem struct {
 	key     string
@@ -21,7 +26,7 @@ type RegItem struct {
 }
 
 // EtcdV3RegisterPlugin implements etcd registry.
-type etcdV3SingleRegisterPlugin struct {
+type EtcdVSingleRegisterPlugin struct {
 	// service address, for example, tcp@127.0.0.1:8972, quic@127.0.0.1:1234
 	ServiceAddress string
 	// etcd addresses
@@ -43,14 +48,14 @@ type etcdV3SingleRegisterPlugin struct {
 	ServerStarted chan struct{}
 }
 
-func NewEtcdV3SingleRegisterPlugin(EtcdServers []string, BasePath string, ServiceAddress string, ServerStarted chan struct{}, Options *store.Config) (*etcdV3SingleRegisterPlugin, error) {
+func NewEtcdV3SingleRegisterPlugin(EtcdServers []string, BasePath string, ServiceAddress string, ServerStarted chan struct{}, Options *store.Config) (*EtcdVSingleRegisterPlugin, error) {
 	kv, err := libkv.NewStore(estore.ETCDV3_SINGLE, EtcdServers, nil)
 	if err != nil {
 		log.Errorf("cannot create etcd registry: %v", err)
 		return nil, err
 	}
 
-	return &etcdV3SingleRegisterPlugin{
+	return &EtcdVSingleRegisterPlugin{
 		EtcdServers:    EtcdServers,
 		BasePath:       BasePath,
 		ServiceAddress: ServiceAddress,
@@ -58,14 +63,16 @@ func NewEtcdV3SingleRegisterPlugin(EtcdServers []string, BasePath string, Servic
 		ServerStarted:  ServerStarted,
 		TTL:            time.Minute,
 		kv:             kv,
-
-		regItems: make(map[string]*RegItem),
-		metas:    make(map[string]string),
-		done:     make(chan struct{}),
+		regItems:       make(map[string]*RegItem),
+		metas:          make(map[string]string),
+		done:           make(chan struct{}),
 	}, nil
 }
 
-func (p *etcdV3SingleRegisterPlugin) register() error {
+func (p *EtcdVSingleRegisterPlugin) register() error {
+	if p.ServerStarted != nil {
+		<-p.ServerStarted
+	}
 	if share.Trace {
 		log.Infof("etcd register start")
 	}
@@ -80,7 +87,7 @@ func (p *etcdV3SingleRegisterPlugin) register() error {
 }
 
 // Start starts to connect etcd cluster
-func (p *etcdV3SingleRegisterPlugin) Start() error {
+func (p *EtcdVSingleRegisterPlugin) Start() error {
 	// create root path
 	err := p.kv.Put(p.BasePath, []byte("rpcx_path"), &store.WriteOptions{IsDir: true, TTL: -1})
 	if err != nil && !strings.Contains(err.Error(), "Not a file") {
@@ -89,7 +96,6 @@ func (p *etcdV3SingleRegisterPlugin) Start() error {
 	}
 
 	go p.register()
-
 	go func() {
 		defer p.kv.Close()
 		<-p.done
@@ -99,7 +105,7 @@ func (p *etcdV3SingleRegisterPlugin) Start() error {
 }
 
 // Stop unregister all services.
-func (p *etcdV3SingleRegisterPlugin) Stop() error {
+func (p *EtcdVSingleRegisterPlugin) Stop() error {
 	for _, name := range p.Services {
 		nodePath := fmt.Sprintf("%s/%s/%s", p.BasePath, name, p.ServiceAddress)
 		exist, err := p.kv.Exists(nodePath)
@@ -117,14 +123,27 @@ func (p *etcdV3SingleRegisterPlugin) Stop() error {
 	return nil
 }
 
+// UpdateMetadata
+func (p *EtcdVSingleRegisterPlugin) UpdateMetadata(metadata string) (err error) {
+	for _, v := range p.regItems {
+		if v.options.IsDir {
+			continue
+		}
+		v.value = []byte(metadata)
+	}
+
+	p.register()
+	return
+}
+
 // Register handles registering event.
 // this service is registered at BASE/serviceName/thisIpAddress node
-func (p *etcdV3SingleRegisterPlugin) Register(name string, rcvr interface{}, metadata string) (err error) {
+func (p *EtcdVSingleRegisterPlugin) Register(name string, rcvr interface{}, metadata string) (err error) {
 	if strings.TrimSpace(name) == "" {
 		err = errors.New("Register service `name` can't be empty")
 		return
 	}
-
+	p.metasLock.Lock()
 	// create service path
 	nodePath := fmt.Sprintf("%s/%s", p.BasePath, name)
 	p.regItems[nodePath] = &RegItem{nodePath, []byte(name), &store.WriteOptions{IsDir: true, TTL: -1}}
@@ -148,7 +167,6 @@ func (p *etcdV3SingleRegisterPlugin) Register(name string, rcvr interface{}, met
 		go p.register()
 	}
 
-	p.metasLock.Lock()
 	if p.metas == nil {
 		p.metas = make(map[string]string)
 	}
@@ -157,11 +175,11 @@ func (p *etcdV3SingleRegisterPlugin) Register(name string, rcvr interface{}, met
 	return
 }
 
-func (p *etcdV3SingleRegisterPlugin) RegisterFunction(serviceName, fname string, fn interface{}, metadata string) error {
+func (p *EtcdVSingleRegisterPlugin) RegisterFunction(serviceName, fname string, fn interface{}, metadata string) error {
 	return p.Register(serviceName, fn, metadata)
 }
 
-func (p *etcdV3SingleRegisterPlugin) Unregister(name string) (err error) {
+func (p *EtcdVSingleRegisterPlugin) Unregister(name string) (err error) {
 	if len(p.Services) == 0 {
 		return nil
 	}

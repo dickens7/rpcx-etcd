@@ -3,7 +3,6 @@ package etcdv3singe
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -59,6 +58,7 @@ func New(addrs []string, options *store.Config) (store.Store, error) {
 		regItems:       make(map[string]RegItem),
 		leaseIDs:       make(map[int64]clientv3.LeaseID),
 		ttl:            defaultTTL,
+		FaultRecovery:  true,
 	}
 
 	cfg := clientv3.Config{
@@ -99,7 +99,6 @@ func (s *EtcdV3Singe) keepAlive(ttl int64, leaseID clientv3.LeaseID) {
 				log.Printf("lease %v has expired", id)
 				return
 			}
-			fmt.Printf("lease %v renewed with TTL: %v\n", id, ka.TTL)
 		}
 		s.mu.Lock()
 		delete(s.leaseIDs, ttl)
@@ -288,7 +287,6 @@ func (s *EtcdV3Singe) WatchTree(directory string, stopCh <-chan struct{}) (<-cha
 				for _, event := range resp.Events {
 					switch event.Type {
 					case mvccpb.PUT:
-						fmt.Printf("PUT %s : %s\n", event.Kv.Key, event.Kv.Value)
 						localKVPair[string(event.Kv.Key)] = &store.KVPair{
 							Key:       string(event.Kv.Key),
 							Value:     event.Kv.Value,
@@ -296,7 +294,6 @@ func (s *EtcdV3Singe) WatchTree(directory string, stopCh <-chan struct{}) (<-cha
 						}
 					case mvccpb.DELETE:
 						delete(localKVPair, string(event.Kv.Key))
-						fmt.Printf("DELETE %s\n", event.Kv.Key)
 					}
 				}
 
