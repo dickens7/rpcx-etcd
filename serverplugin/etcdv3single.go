@@ -163,8 +163,6 @@ func (p *EtcdVSingleRegisterPlugin) Register(name string, rcvr interface{}, meta
 
 	if p.ServerStarted == nil {
 		p.register()
-	} else {
-		go p.register()
 	}
 
 	if p.metas == nil {
