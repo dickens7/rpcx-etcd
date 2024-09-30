@@ -21,6 +21,9 @@ func init() {
 
 const defaultTTL = 30
 
+// FaultRecovery control whether the fault is recovered
+var FaultRecovery = true
+
 // EtcdConfigAutoSyncInterval give a choice to those etcd cluster could not auto sync
 // such I deploy clusters in docker they will dial tcp: lookup etcd1: Try again, can just set this to zero
 var EtcdConfigAutoSyncInterval = time.Minute * 5
@@ -58,7 +61,7 @@ func New(addrs []string, options *store.Config) (store.Store, error) {
 		regItems:       make(map[string]RegItem),
 		leaseIDs:       make(map[int64]clientv3.LeaseID),
 		ttl:            defaultTTL,
-		FaultRecovery:  true,
+		FaultRecovery:  FaultRecovery,
 	}
 
 	cfg := clientv3.Config{
