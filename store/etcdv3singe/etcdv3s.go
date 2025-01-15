@@ -107,26 +107,30 @@ func (s *EtcdV3Singe) keepAlive(ttl int64, leaseID clientv3.LeaseID) {
 		delete(s.leaseIDs, ttl)
 		s.mu.Unlock()
 		if s.FaultRecovery {
-			log.Printf("lease fault recovery %v", id)
-			leaseID, err := s.getLeaseID(ttl)
-			if err != nil {
-				log.Printf("lease %v grant err: %s", id, err)
-				return
-			}
-			s.mu.Lock()
-			s.leaseIDs[ttl] = leaseID
-			s.mu.Unlock()
-			for _, v := range s.regItems {
-				if int64(v.options.TTL.Seconds()) == ttl {
-					ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
-					_, err := s.client.Put(ctx, v.key, string(v.value), clientv3.WithLease(leaseID))
-					cancel()
-					if err != nil {
-						log.Printf("lease %v fault recovery, put %v err:  %s", id, v.key, err)
-						return
-					}
-					log.Printf("lease fault recovery %v, path: %s", id, v.key)
+			for {
+				log.Printf("lease fault recovery %v", id)
+				leaseID, err := s.getLeaseID(ttl)
+				if err != nil {
+					log.Printf("lease %v grant err: %s", id, err)
+					time.Sleep(time.Millisecond * 50)
+					continue
 				}
+				s.mu.Lock()
+				s.leaseIDs[ttl] = leaseID
+				s.mu.Unlock()
+				for _, v := range s.regItems {
+					if int64(v.options.TTL.Seconds()) == ttl {
+						ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+						_, err := s.client.Put(ctx, v.key, string(v.value), clientv3.WithLease(leaseID))
+						cancel()
+						if err != nil {
+							log.Printf("lease %v fault recovery, put %v err:  %s", id, v.key, err)
+							return
+						}
+						log.Printf("lease fault recovery %v, path: %s", id, v.key)
+					}
+				}
+				return
 			}
 		}
 	}(leaseID)
